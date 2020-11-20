@@ -4,6 +4,8 @@ int initialized = 0;
 int offset_bits;
 int directory_bits;
 int page_bits;
+int directory_size;
+int num_frames;
 
 /*
 Function responsible for allocating and setting your physical memory
@@ -17,9 +19,9 @@ void SetPhysicalMem() {
    	
 	directory_bits = (32 - offset_bits) / 2;
 	page_bits = 32 - offset_bits - directory_bits;
-   	int directory_size = 1 << directory_bits;
+   	directory_size = 1 << directory_bits;
    	int page_table_size = 1 << page_bits;
-   	int num_frames = directory_size * page_table_size;
+   	num_frames = directory_size * page_table_size;
 	directory = (pde_t *) malloc(sizeof(pde_t) * directory_size);
 	page_tables = (pte_t **) malloc(sizeof(pte_t *) * directory_size);
 	
@@ -27,6 +29,11 @@ void SetPhysicalMem() {
 	for(i = 0; i < directory_size; i++) {
 		directory[i] = -1;
 		page_tables[i] = (pte_t *) malloc(sizeof(pte_t) * page_table_size);
+		
+		int j;
+		for(j = 0; j < page_table_size; j++) {
+			page_tables[i][j] = 0;
+		}
 	}
 	
 	memory = (void **) malloc(sizeof(void *) * num_frames);
@@ -93,7 +100,7 @@ pte_t *Translate(pde_t *pgdir, void *va) {
     int directory_index = ptr >> (32 - directory_bits);
     pde_t index = pgdir[directory_index];
     pte_t *table = page_tables[index];
-	int table_index = (ptr >> offset_bits) & (1 << page_bits);
+	int table_index = (ptr >> offset_bits) & ((1 << (page_bits + 1)) - 1);
 	pte_t index2 = table[table_index];
 	int offset = ptr & (1 << offset_bits);
 	void *frame = memory[index2];
@@ -111,13 +118,27 @@ as an argument, and sets a page table entry. This function will walk the page
 directory to see if there is an existing mapping for a virtual address. If the
 virtual address is not present, then a new entry will be added
 */
-int
-PageMap(pde_t *pgdir, void *va, void *pa)
-{
-
+int PageMap(pde_t *pgdir, void *va, void *pa) {
     /*HINT: Similar to Translate(), find the page directory (1st level)
     and page table (2nd-level) indices. If no mapping exists, set the
     virtual to physical mapping */
+    uintptr_t ptr = (uintptr_t) va;
+    int directory_index = ptr >> (32 - directory_bits);
+    pde_t index = pgdir[directory_index];
+    
+    if(index == -1) {
+    	int table_index = (ptr >> offset_bits) & (1 << page_bits);
+    	
+    	int i;
+    	for(i = 0; i < directory_size; i++) {
+    		pte_t *table = page_tables[i];
+    		if(!table[table_index]) {
+    			table[table_index] = (pde_t) pa;
+    			pgdir[directory_index] = i;
+    			return 1;
+    		}
+    	}
+    }
 
     return -1;
 }
@@ -126,8 +147,9 @@ PageMap(pde_t *pgdir, void *va, void *pa)
 /*Function that gets the next available page
 */
 void *get_next_avail(int num_pages) {
-
-    //Use virtual address bitmap to find the next free page
+	
+	
+	return NULL;
 }
 
 
