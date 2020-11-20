@@ -33,6 +33,11 @@ struct tlb {
 };
 struct tlb tlb_store;
 
+void **memory;
+pde_t *directory;
+pte_t **page_tables;
+char *virtual_bitmap;
+char *physical_bitmap;
 
 void SetPhysicalMem();
 pte_t* Translate(pde_t *pgdir, void *va);

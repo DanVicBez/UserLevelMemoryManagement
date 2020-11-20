@@ -1,19 +1,40 @@
 #include "my_vm.h"
 
+int initialized = 0;
+
 /*
 Function responsible for allocating and setting your physical memory
 */
 void SetPhysicalMem() {
+ 	int offset_bits = 0;
+   	int page_size = PGSIZE;
+   	while(page_size >>= 1) {
+   		offset_bits++;
+   	}
+   	
+   	int directory_bits = (32 - offset_bits) / 2;
+   	int page_bits = 32 - offset_bits - directory_bits;
+   	int directory_size = 1 << directory_bits;
+   	int page_table_size = 1 << page_bits;
+   	int num_frames = directory_size * page_table_size;
+	directory = (pde_t *) malloc(sizeof(pde_t) * directory_size);
+	page_tables = (pte_t **) malloc(sizeof(pte_t *) * directory_size);
+	
+	int i;
+	for(i = 0; i < directory_size; i++) {
+		directory[i] = -1;
+		page_tables[i] = (pte_t *) malloc(sizeof(pte_t) * page_table_size);
+	}
+	
+	memory = (void **) malloc(sizeof(void *) * num_frames);
+	
+	for(i = 0; i < num_frames; i++) {
+		memory[i] = NULL;
+	}
 
-    //Allocate physical memory using mmap or malloc; this is the total size of
-    //your memory you are simulating
-
-
-    //HINT: Also calculate the number of physical and virtual pages and allocate
-    //virtual and physical bitmaps and initialize them
-
+	virtual_bitmap = (char *) malloc(num_frames / 8);
+	physical_bitmap = (char *) malloc(num_frames / 8);	
 }
-
 
 /*
  * Part 2: Add a virtual to physical page translation to the TLB.
@@ -107,6 +128,10 @@ and used by the benchmark
 void *myalloc(unsigned int num_bytes) {
 
     //HINT: If the physical memory is not yet initialized, then allocate and initialize.
+	if(!initialized) {
+		initialized = true;
+		SetPhysicalMem();
+	}
 
    /* HINT: If the page directory is not initialized, then initialize the
    page directory. Next, using get_next_avail(), check if there are free pages. If

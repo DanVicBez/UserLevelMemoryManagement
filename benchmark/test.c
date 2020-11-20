@@ -6,6 +6,10 @@
 #define SIZE 5
 
 int main() {
+	SetPhysicalMem();
+}
+
+/*int main() {
 
     printf("Allocating three arrays of 400 bytes\n");
     void *a = myalloc(100*4);
@@ -68,4 +72,4 @@ int main() {
         printf("free function does not work\n");
 
     return 0;
-}
+}*/
