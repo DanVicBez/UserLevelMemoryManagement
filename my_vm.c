@@ -1,19 +1,22 @@
 #include "my_vm.h"
 
 int initialized = 0;
+int offset_bits;
+int directory_bits;
+int page_bits;
 
 /*
 Function responsible for allocating and setting your physical memory
 */
 void SetPhysicalMem() {
- 	int offset_bits = 0;
+ 	offset_bits = 0;
    	int page_size = PGSIZE;
    	while(page_size >>= 1) {
    		offset_bits++;
    	}
    	
-   	int directory_bits = (32 - offset_bits) / 2;
-   	int page_bits = 32 - offset_bits - directory_bits;
+	directory_bits = (32 - offset_bits) / 2;
+	page_bits = 32 - offset_bits - directory_bits;
    	int directory_size = 1 << directory_bits;
    	int page_table_size = 1 << page_bits;
    	int num_frames = directory_size * page_table_size;
@@ -85,16 +88,22 @@ print_TLB_missrate()
 The function takes a virtual address and page directories starting address and
 performs translation to return the physical address
 */
-pte_t * Translate(pde_t *pgdir, void *va) {
-    //HINT: Get the Page directory index (1st level) Then get the
-    //2nd-level-page table index using the virtual address.  Using the page
-    //directory index and page table index get the physical address
+pte_t *Translate(pde_t *pgdir, void *va) {
+    uintptr_t ptr = (uintptr_t) va;
+    int directory_index = ptr >> (32 - directory_bits);
+    pde_t index = pgdir[directory_index];
+    pte_t *table = page_tables[index];
+	int table_index = (ptr >> offset_bits) & (1 << page_bits);
+	pte_t index2 = table[table_index];
+	int offset = ptr & (1 << offset_bits);
+	void *frame = memory[index2];
+	
+	if(frame != NULL) {
+		return frame + offset;
+	}
 
-
-    //If translation not successfull
     return NULL;
 }
-
 
 /*
 The function takes a page directory address, virtual address, physical address
