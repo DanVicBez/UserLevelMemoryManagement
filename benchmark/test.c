@@ -6,7 +6,18 @@
 #define SIZE 5
 
 int main() {
-	SetPhysicalMem();
+	int *x[10];
+	int i;
+	for(i = 0; i < 10; i++) {
+		x[i] = myalloc(sizeof(int));
+		printf("x[%d] = %p\n", i, x[i]);
+		//printf("%p\n", Translate(directory, (pde_t *) x[i]));
+	}
+	
+	for(i = 0; i < 10; i++) {
+		myfree(x[i], sizeof(int));
+		printf("%p\n", Translate(directory, (pde_t *) x[i]));
+	}
 }
 
 /*int main() {

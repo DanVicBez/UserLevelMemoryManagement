@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/mman.h>
+#include <math.h>
+#include <errno.h>
 
 //Assume the address space is 32 bits, so the max memory size is 4GB
 //Page size is 4KB

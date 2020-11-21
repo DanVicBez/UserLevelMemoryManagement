@@ -1,10 +1,24 @@
 #include "my_vm.h"
 
-int initialized = 0;
+// whether myalloc() has been called yet
+bool initialized = false;
+
+// the number of bits in a VA representing the frame offset
 int offset_bits;
+
+// the number of bits in a VA representing the directory index
 int directory_bits;
+
+// the number of bits in a VA representing the page table index
 int page_bits;
+
+// the number of page tables in the directory
 int directory_size;
+
+// the number of pages in a page table
+int page_table_size;
+
+// the total number of frames
 int num_frames;
 
 /*
@@ -20,7 +34,7 @@ void SetPhysicalMem() {
 	directory_bits = (32 - offset_bits) / 2;
 	page_bits = 32 - offset_bits - directory_bits;
    	directory_size = 1 << directory_bits;
-   	int page_table_size = 1 << page_bits;
+   	page_table_size = 1 << page_bits;
    	num_frames = directory_size * page_table_size;
 	directory = (pde_t *) malloc(sizeof(pde_t) * directory_size);
 	page_tables = (pte_t **) malloc(sizeof(pte_t *) * directory_size);
@@ -32,14 +46,17 @@ void SetPhysicalMem() {
 		
 		int j;
 		for(j = 0; j < page_table_size; j++) {
-			page_tables[i][j] = 0;
+			page_tables[i][j] = -1;
 		}
 	}
 
 	virtual_bitmap = (char *) malloc(num_frames / 8);
 	physical_bitmap = (char *) malloc(num_frames / 8);
+	//memset(virtual_bitmap, 0, num_frames / 8);
+	//memset(physical_bitmap, 0, num_frames / 8);
 	
-	memory = mmap(NULL, MEMSIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS, -1, 0);
+	memory = mmap(NULL, 1, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+	printf("memory = %p\n", memory);
 }
 
 /*
@@ -96,10 +113,10 @@ pte_t *Translate(pde_t *pgdir, void *va) {
     int directory_index = ptr >> (32 - directory_bits);
     pde_t index = pgdir[directory_index];
     pte_t *table = page_tables[index];
-	int table_index = (ptr >> offset_bits) & ((1 << (page_bits + 1)) - 1);
+	int table_index = (ptr >> offset_bits) & ((1 << (page_bits)) - 1);
 	pte_t index2 = table[table_index];
-	int offset = ptr & (1 << offset_bits);
-	char *frame = memory + index2 * PGSIZE;
+	int offset = ptr & ((1 << offset_bits) - 1);
+	void *frame = memory + index2 * PGSIZE;
 	
 	return (pte_t *) (frame + offset);
 }
@@ -113,10 +130,10 @@ virtual address is not present, then a new entry will be added
 int PageMap(pde_t *pgdir, void *va, void *pa) {
     uintptr_t ptr = (uintptr_t) va;
     int directory_index = ptr >> (32 - directory_bits);
-    int table_index = (ptr >> offset_bits) & (1 << page_bits);
+    int table_index = (ptr >> offset_bits) & ((1 << page_bits) - 1);
     pde_t index = pgdir[directory_index];
     
-    if(index == -1) { // no page table mapped to the directory index
+    /*if(index == -1) { // no page table mapped to the directory index
     	// find a page table with the required index free
     	int i;
     	for(i = 0; i < directory_size; i++) {
@@ -127,14 +144,13 @@ int PageMap(pde_t *pgdir, void *va, void *pa) {
     			return 1;
     		}
     	}
-    } else { // there is a mapped page table
-    	pte_t *table = page_tables[index];
-    	if(table[table_index] == -1) {
-    		table[table_index] = ((char *) pa - memory) / PGSIZE;
-   			pgdir[directory_index] = i;
-   			return 1;
-    	}
-    }
+    } else { // there is a mapped page table*/
+	pte_t *table = page_tables[index];
+	if(table[table_index] == -1) {
+		table[table_index] = ((char *) pa - memory) / PGSIZE;
+		return 1;
+	}
+    //}
 
     return 0;
 }
@@ -143,11 +159,34 @@ int PageMap(pde_t *pgdir, void *va, void *pa) {
 /*Function that gets the next available page
 */
 void *get_next_avail(int num_pages) {
+	int i;
+	for(i = 1; i < num_frames; i++) {
+		bool valid = true;
+		
+		int j;
+		for(j = i; j < num_pages + i; j++) {
+			char bitmap = *(virtual_bitmap + j / 8);
+			if(bitmap & (1 << (j % 8))) {
+				valid = false;
+			}
+		}
+		
+		if(valid) {
+			for(j = i; j < num_pages + i; j++) {
+				char *bitmap = (virtual_bitmap + j / 8);
+				*bitmap |= 1 << j % 8;
+			}
+			
+			break;
+		}
+	}
 	
+	if(i == num_frames) {
+		return NULL;
+	}
 	
-	return NULL;
+	return (void *) (i * PGSIZE);
 }
-
 
 /* Function responsible for allocating pages
 and used by the benchmark
@@ -158,21 +197,111 @@ void *myalloc(unsigned int num_bytes) {
 		SetPhysicalMem();
 	}
 
-   /* HINT: If the page directory is not initialized, then initialize the
-   page directory. Next, using get_next_avail(), check if there are free pages. If
-   free pages are available, set the bitmaps and map a new page. Note, you will
-   have to mark which physical pages are used. */
+	int num_pages = num_bytes / PGSIZE + (num_bytes % PGSIZE != 0);
+	void *va = get_next_avail(num_pages);
+	
+	if(va == NULL) {
+		return NULL;
+	}
+	
+    int directory_index = ((uintptr_t) va) >> (32 - directory_bits);
+    int table_index = (((uintptr_t) va) >> offset_bits) & ((1 << page_bits) - 1);
+	
+	if(directory[directory_index] == -1) {
+		// find a page table with a number of consecutive free entries equal to num_pages
+		int i;
+		for(i = 0; i < directory_size && table_index == -1; i++) {
+			pte_t *table = page_tables[i];
+			
+			int j;
+			for(j = 0; j <= page_table_size - num_pages; j++) {
+				bool valid = true;
+				
+				int k;
+				for(k = 0; k < num_pages; k++) {
+					if(table[j + k] != -1) {
+						valid = false;
+						break;
+					}
+				}
+				
+				if(valid) {
+					i--;
+					break;
+				}
+			}
+		}
+		
+		directory[directory_index] = i;
+	}
+	
+	/*// see whether the page table is already mapped in the directory
+	int directory_index;
+	for(directory_index = 0; directory_index < directory_size && directory[directory_index] != i; directory_index++) {}
+	
+	// if not, find the first empty directory entry and map it to the page table
+	if(directory_index == directory_size) {
+		for(directory_index = 0; directory_index < directory_size && directory[directory_index] != -1; directory_index++) {}
+		
+		// directory is full
+		if(directory_index == directory_size) {
+			return NULL;
+		}
+		
+		directory[directory_index] = i;
+	}*/
+	
+	// find an available frame for each page and map them together
+	void *ptr;
+	int k;
+	for(k = 0; k < num_pages; k++) {
+		// find a free frame
+		int i;
+		for(i = 0; i < num_frames; i++) {
+			char *bitmap = physical_bitmap + i / 8;
+			if(!(*bitmap & (1 << (i % 8)))) {
+				*bitmap |= 1 << i % 8;
+				break;
+			}
+		}
+	
+		PageMap(directory, va, memory + i * PGSIZE);
+		
+		if(k == 0) {
+			ptr = va;
+		}
+	}
 
-    return NULL;
+	return ptr;
 }
 
 /* Responsible for releasing one or more memory pages using virtual address (va)
 */
 void myfree(void *va, int size) {
-
     //Free the page table entries starting from this virtual address (va)
     // Also mark the pages free in the bitmap
     //Only free if the memory from "va" to va+size is valid
+    int num_pages = size / PGSIZE + (size % PGSIZE != 0);
+    int i;
+    for(i = 0; i < num_pages; i++) {
+		int directory_index = ((uintptr_t) va + i * PGSIZE) >> (32 - directory_bits);
+		int table_index = (((uintptr_t) va + i * PGSIZE) >> offset_bits) & ((1 << page_bits) - 1);
+		int page_num = (uintptr_t) va / PGSIZE + i;
+		
+		char *bitmap = virtual_bitmap + page_num / 8;
+		if(*bitmap & (1 << (page_num % 8))) {
+			*bitmap ^= 1 << (page_num % 8);
+			
+			pte_t *table = page_tables[directory[directory_index]];
+			int frame_num = table[table_index];
+			bitmap = physical_bitmap + frame_num / 8;
+			if(*bitmap & (1 << (frame_num % 8))) {
+				*bitmap ^= 1 << (frame_num % 8);
+			}
+			
+			table[table_index] = -1;
+		}
+    }
 }
 
 
