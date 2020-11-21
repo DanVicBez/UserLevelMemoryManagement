@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <sys/mman.h>
 
 //Assume the address space is 32 bits, so the max memory size is 4GB
 //Page size is 4KB
@@ -34,7 +35,7 @@ struct tlb {
 };
 struct tlb tlb_store;
 
-void **memory;
+char *memory;
 pde_t *directory;
 pte_t **page_tables;
 char *virtual_bitmap;

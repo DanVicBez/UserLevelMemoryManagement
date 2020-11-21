@@ -35,15 +35,11 @@ void SetPhysicalMem() {
 			page_tables[i][j] = 0;
 		}
 	}
-	
-	memory = (void **) malloc(sizeof(void *) * num_frames);
-	
-	for(i = 0; i < num_frames; i++) {
-		memory[i] = NULL;
-	}
 
 	virtual_bitmap = (char *) malloc(num_frames / 8);
-	physical_bitmap = (char *) malloc(num_frames / 8);	
+	physical_bitmap = (char *) malloc(num_frames / 8);
+	
+	memory = mmap(NULL, MEMSIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS, -1, 0);
 }
 
 /*
@@ -103,13 +99,9 @@ pte_t *Translate(pde_t *pgdir, void *va) {
 	int table_index = (ptr >> offset_bits) & ((1 << (page_bits + 1)) - 1);
 	pte_t index2 = table[table_index];
 	int offset = ptr & (1 << offset_bits);
-	void *frame = memory[index2];
+	char *frame = memory + index2 * PGSIZE;
 	
-	if(frame != NULL) {
-		return frame + offset;
-	}
-
-    return NULL;
+	return (pte_t *) (frame + offset);
 }
 
 /*
@@ -119,28 +111,32 @@ directory to see if there is an existing mapping for a virtual address. If the
 virtual address is not present, then a new entry will be added
 */
 int PageMap(pde_t *pgdir, void *va, void *pa) {
-    /*HINT: Similar to Translate(), find the page directory (1st level)
-    and page table (2nd-level) indices. If no mapping exists, set the
-    virtual to physical mapping */
     uintptr_t ptr = (uintptr_t) va;
     int directory_index = ptr >> (32 - directory_bits);
+    int table_index = (ptr >> offset_bits) & (1 << page_bits);
     pde_t index = pgdir[directory_index];
     
-    if(index == -1) {
-    	int table_index = (ptr >> offset_bits) & (1 << page_bits);
-    	
+    if(index == -1) { // no page table mapped to the directory index
+    	// find a page table with the required index free
     	int i;
     	for(i = 0; i < directory_size; i++) {
     		pte_t *table = page_tables[i];
-    		if(!table[table_index]) {
-    			table[table_index] = (pde_t) pa;
+    		if(table[table_index] == -1) {
+    			table[table_index] = ((char *) pa - memory) / PGSIZE;
     			pgdir[directory_index] = i;
     			return 1;
     		}
     	}
+    } else { // there is a mapped page table
+    	pte_t *table = page_tables[index];
+    	if(table[table_index] == -1) {
+    		table[table_index] = ((char *) pa - memory) / PGSIZE;
+   			pgdir[directory_index] = i;
+   			return 1;
+    	}
     }
 
-    return -1;
+    return 0;
 }
 
 
@@ -157,8 +153,6 @@ void *get_next_avail(int num_pages) {
 and used by the benchmark
 */
 void *myalloc(unsigned int num_bytes) {
-
-    //HINT: If the physical memory is not yet initialized, then allocate and initialize.
 	if(!initialized) {
 		initialized = true;
 		SetPhysicalMem();
