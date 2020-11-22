@@ -15,7 +15,6 @@
 //Add any important includes here which you may need
 
 #define PGSIZE 4096
-
 // Maximum size of your memory
 #define MAX_MEMSIZE 4ULL*1024*1024*1024 //4GB
 
@@ -31,12 +30,17 @@ typedef unsigned long pde_t;
 
 //Structure to represents TLB
 struct tlb {
-
     //Assume your TLB is a direct mapped TLB of TBL_SIZE (entries)
     // You must also define wth TBL_SIZE in this file.
     //Assume each bucket to be 4 bytes
+    int index;
+    int last_used;
+    int page_number;
+    pte_t frame_number;
+    struct tlb *next;
 };
-struct tlb tlb_store;
+
+struct tlb *tlb_store;
 
 char *memory;
 pde_t *directory;

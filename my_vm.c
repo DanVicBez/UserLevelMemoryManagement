@@ -22,8 +22,8 @@ int page_table_size;
 int num_frames;
 
 /*
-Function responsible for allocating and setting your physical memory
-*/
+ * Function responsible for allocating and setting your physical memory
+ */
 void SetPhysicalMem() {
  	offset_bits = 0;
    	int page_size = PGSIZE;
@@ -52,46 +52,115 @@ void SetPhysicalMem() {
 
 	virtual_bitmap = (char *) malloc(num_frames / 8);
 	physical_bitmap = (char *) malloc(num_frames / 8);
-	//memset(virtual_bitmap, 0, num_frames / 8);
-	//memset(physical_bitmap, 0, num_frames / 8);
 	
 	memory = mmap(NULL, 1, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+	
+	tlb_store = NULL;
 }
 
 /*
  * Part 2: Add a virtual to physical page translation to the TLB.
  * Feel free to extend the function arguments or return type.
  */
-int
-add_TLB(void *va, void *pa)
-{
-
+int add_TLB(void *va, void *pa) {
     /*Part 2 HINT: Add a virtual to physical page translation to the TLB */
+    struct tlb *tlb;
+    
+    if(tlb_store == NULL) {
+    	tlb_store = malloc(sizeof(struct tlb));
+    	tlb_store->index = 0;
+    	tlb = tlb_store;
+    } else {
+		for(tlb = tlb_store; tlb->next != NULL; tlb = tlb->next) {}
+		
+		tlb->next = malloc(sizeof(struct tlb));
+		tlb->next->index = tlb->index + 1;
+		tlb = tlb->next;
+	}
+    
+    tlb->last_used = 0;
+   	tlb->page_number = ((uintptr_t) va) >> offset_bits;
+   	tlb->frame_number = ((char *) pa - memory) / PGSIZE;
+   	tlb->next = NULL;
+   	
+   	// find a TLB entry to evict
+   	if(tlb->index == TLB_SIZE) {
+   		int lru = 0;
+   		int lru_index = 0;
+   		
+   		// find the highest last_used value
+   		for(tlb = tlb_store; tlb != NULL; tlb = tlb->next) {
+   			if(tlb->last_used > lru) {
+   				lru = tlb->last_used;
+   				lru_index = tlb->index;
+   			}
+   		}
+   		
+   		// remove the entry from the linked list and free it
+   		if(lru_index == 0) {
+   			struct tlb *old = tlb_store;
+   			tlb_store = tlb_store->next;
+   			tlb = tlb_store;
+   			free(old);
+   		} else {
+			for(tlb = tlb_store; tlb != NULL; tlb = tlb->next) {
+	   			if(tlb->next->index == lru_index) {
+	   				struct tlb *old = tlb->next;
+	   				tlb->next = tlb->next->next;
+	   				tlb = tlb->next;
+	   				free(old);
+	   				break;
+	   			}
+	   		}
+   		}
+   		
+   		// lower the index of each TLB entry after the removed entry
+   		while(tlb != NULL) {
+   			tlb->index--;
+   			tlb = tlb->next;
+   		}
+   	}
 
-    return -1;
+    return 1;
 }
-
 
 /*
  * Part 2: Check TLB for a valid translation.
  * Returns the physical page address.
  * Feel free to extend this function and change the return type.
  */
-pte_t *
-check_TLB(void *va) {
+pte_t *check_TLB(void *va) {
+	if(tlb_store == NULL) return NULL;
 
-    /* Part 2: TLB lookup code here */
-
+	int page_number = ((uintptr_t) va) >> offset_bits;
+	struct tlb *tlb = tlb_store;
+	
+	while(tlb != NULL) {
+		if(tlb->page_number == page_number) {
+			tlb->last_used = 0;
+			
+			// increment last_used of every other TLB entry
+			struct tlb *tlb2;
+			for(tlb2 = tlb_store; tlb2 != NULL; tlb2 = tlb2->next) {
+				if(tlb2 != tlb) {
+					tlb2->last_used++;
+				}
+			}
+			
+			return (pte_t *) ((char *) memory + tlb->frame_number * PGSIZE);
+		}	
+	
+		tlb = tlb->next;
+	}
+	
+	return NULL;
 }
-
 
 /*
  * Part 2: Print TLB miss rate.
  * Feel free to extend the function arguments or return type.
  */
-void
-print_TLB_missrate()
-{
+void print_TLB_missrate() {
     double miss_rate = 0;
 
     /*Part 2 Code here to calculate and print the TLB miss rate*/
@@ -102,22 +171,29 @@ print_TLB_missrate()
     fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
 }
 
-
 /*
 The function takes a virtual address and page directories starting address and
 performs translation to return the physical address
 */
 pte_t *Translate(pde_t *pgdir, void *va) {
     uintptr_t ptr = (uintptr_t) va;
-    int directory_index = ptr >> (32 - directory_bits);
-    pde_t index = pgdir[directory_index];
-    pte_t *table = page_tables[index];
-	int table_index = (ptr >> offset_bits) & ((1 << (page_bits)) - 1);
-	pte_t index2 = table[table_index];
 	int offset = ptr & ((1 << offset_bits) - 1);
-	void *frame = memory + index2 * PGSIZE;
-	
-	return (pte_t *) (frame + offset);
+    pte_t *tlb_entry = check_TLB(va);
+    
+    if(tlb_entry == NULL) {
+    	// calculate the PA and add it to the TLB
+		int directory_index = ptr >> (32 - directory_bits);
+		pte_t *table = page_tables[pgdir[directory_index]];
+		
+		int table_index = (ptr >> offset_bits) & ((1 << (page_bits)) - 1);
+		pte_t index = table[table_index];
+		void *pa = memory + index * PGSIZE + offset;
+		
+		add_TLB(va, pa);
+		return (pte_t *) pa;
+    } else {
+    	return tlb_entry + offset;
+    }
 }
 
 /*
@@ -394,10 +470,10 @@ void MatMult(void *mat1, void *mat2, int size, void *answer) {
     load each element and perform multiplication. Take a look at test.c! In addition to
     getting the values from two matrices, you will perform multiplication and
     store the result to the "answer array"*/
-	int k; 
+	int k;
 	int j;
 	int i;
-	int y; 
+	int y;
 	int z;
     int sum = 0;
     int address_a = 0;
