@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <math.h>
 #include <errno.h>
+#include <string.h>
 
 //Assume the address space is 32 bits, so the max memory size is 4GB
 //Page size is 4KB
@@ -54,5 +55,11 @@ void PutVal(void *va, void *val, int size);
 void GetVal(void *va, void *val, int size);
 void MatMult(void *mat1, void *mat2, int size, void *answer);
 void print_TLB_missrate();
+int get_physical_bit(int bit);
+int get_virtual_bit(int bit);
+void set_physical_bit(int bit);
+void set_virtual_bit(int bit);
+void clear_physical_bit(int bit);
+void clear_virtual_bit(int bit);
 
 #endif

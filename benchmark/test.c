@@ -6,21 +6,6 @@
 #define SIZE 5
 
 int main() {
-	int *x[10];
-	int i;
-	for(i = 0; i < 10; i++) {
-		x[i] = myalloc(sizeof(int));
-		printf("x[%d] = %p\n", i, x[i]);
-		//printf("%p\n", Translate(directory, (pde_t *) x[i]));
-	}
-	
-	for(i = 0; i < 10; i++) {
-		myfree(x[i], sizeof(int));
-		printf("%p\n", Translate(directory, (pde_t *) x[i]));
-	}
-}
-
-/*int main() {
 
     printf("Allocating three arrays of 400 bytes\n");
     void *a = myalloc(100*4);
@@ -83,4 +68,4 @@ int main() {
         printf("free function does not work\n");
 
     return 0;
-}*/
+}

@@ -56,7 +56,6 @@ void SetPhysicalMem() {
 	//memset(physical_bitmap, 0, num_frames / 8);
 	
 	memory = mmap(NULL, 1, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-	printf("memory = %p\n", memory);
 }
 
 /*
@@ -165,16 +164,14 @@ void *get_next_avail(int num_pages) {
 		
 		int j;
 		for(j = i; j < num_pages + i; j++) {
-			char bitmap = *(virtual_bitmap + j / 8);
-			if(bitmap & (1 << (j % 8))) {
+			if(get_virtual_bit(j)) {
 				valid = false;
 			}
 		}
 		
 		if(valid) {
 			for(j = i; j < num_pages + i; j++) {
-				char *bitmap = (virtual_bitmap + j / 8);
-				*bitmap |= 1 << j % 8;
+				set_virtual_bit(j);
 			}
 			
 			break;
@@ -258,9 +255,8 @@ void *myalloc(unsigned int num_bytes) {
 		// find a free frame
 		int i;
 		for(i = 0; i < num_frames; i++) {
-			char *bitmap = physical_bitmap + i / 8;
-			if(!(*bitmap & (1 << (i % 8)))) {
-				*bitmap |= 1 << i % 8;
+			if(!get_physical_bit(i)) {
+				set_physical_bit(i);
 				break;
 			}
 		}
@@ -275,61 +271,116 @@ void *myalloc(unsigned int num_bytes) {
 	return ptr;
 }
 
-/* Responsible for releasing one or more memory pages using virtual address (va)
-*/
+/* 
+ * Responsible for releasing one or more memory pages using virtual address (va)
+ */
 void myfree(void *va, int size) {
-    //Free the page table entries starting from this virtual address (va)
+    // Free the page table entries starting from this virtual address (va)
     // Also mark the pages free in the bitmap
-    //Only free if the memory from "va" to va+size is valid
+    // Only free if the memory from "va" to va+size is valid
     int num_pages = size / PGSIZE + (size % PGSIZE != 0);
     int i;
     for(i = 0; i < num_pages; i++) {
 		int directory_index = ((uintptr_t) va + i * PGSIZE) >> (32 - directory_bits);
 		int table_index = (((uintptr_t) va + i * PGSIZE) >> offset_bits) & ((1 << page_bits) - 1);
+		int offset = ((uintptr_t) va) & ((1 << offset_bits) - 1);
+		
+		// not pointing to base of page, invalid pointer
+		if(!offset) {
+			return;
+		}
+		
 		int page_num = (uintptr_t) va / PGSIZE + i;
 		
-		char *bitmap = virtual_bitmap + page_num / 8;
-		if(*bitmap & (1 << (page_num % 8))) {
-			*bitmap ^= 1 << (page_num % 8);
+		if(get_virtual_bit(page_num)) {
+			clear_virtual_bit(page_num);
 			
 			pte_t *table = page_tables[directory[directory_index]];
 			int frame_num = table[table_index];
-			bitmap = physical_bitmap + frame_num / 8;
-			if(*bitmap & (1 << (frame_num % 8))) {
-				*bitmap ^= 1 << (frame_num % 8);
+
+			if(get_physical_bit(frame_num)) {
+				clear_physical_bit(frame_num);
 			}
 			
 			table[table_index] = -1;
+		} else { // pointing to unused page, invalid pointer
+			return;
 		}
     }
 }
 
-
-/* The function copies data pointed by "val" to physical
+/* 
+ * The function copies data pointed by "val" to physical
  * memory pages using virtual address (va)
-*/
+ */
 void PutVal(void *va, void *val, int size) {
-
     /* HINT: Using the virtual address and Translate(), find the physical page. Copy
        the contents of "val" to a physical page. NOTE: The "size" value can be larger
        than one page. Therefore, you may have to find multiple pages using Translate()
        function.*/
+	int offset = ((uintptr_t) va) & ((1 << offset_bits) - 1);
+	void *pa = Translate(directory, va);
 
+	// invalid virtual address
+	if(!get_virtual_bit(((uintptr_t) va) / PGSIZE)) {
+		return;
+	}
+
+	int remaining_in_page = PGSIZE - offset;
+	if(size <= remaining_in_page) {
+		memcpy(pa, val, size);
+	} else {
+		memcpy(pa, val, remaining_in_page);
+		size -= remaining_in_page;
+		va += remaining_in_page;
+		val += remaining_in_page;
+		
+		while(size > 0) {
+			if(!get_virtual_bit(((uintptr_t) va) / PGSIZE)) return;
+		
+			pa = Translate(directory, va);
+			memcpy(pa, val, size % PGSIZE);
+			size -= PGSIZE;
+			va += PGSIZE;
+			val += PGSIZE;
+		}
+	}
 }
-
 
 /*Given a virtual address, this function copies the contents of the page to val*/
 void GetVal(void *va, void *val, int size) {
-
     /* HINT: put the values pointed to by "va" inside the physical memory at given
     "val" address. Assume you can access "val" directly by derefencing them.
     If you are implementing TLB,  always check first the presence of translation
     in TLB before proceeding forward */
+	int offset = ((uintptr_t) va) & ((1 << offset_bits) - 1);
+	void *pa = Translate(directory, va);
 
+	// invalid virtual address
+	if(!get_virtual_bit(((uintptr_t) va) / PGSIZE)) {
+		return;
+	}
 
+	int remaining_in_page = PGSIZE - offset;
+	if(size <= remaining_in_page) {
+		memcpy(val, pa, size);
+	} else {
+		memcpy(val, pa, remaining_in_page);
+		size -= remaining_in_page;
+		va += remaining_in_page;
+		val += remaining_in_page;
+		
+		while(size > 0) {
+			if(!get_virtual_bit((uintptr_t) va) / PGSIZE) return;
+		
+			pa = Translate(directory, va);
+			memcpy(val, pa, size % PGSIZE);
+			size -= PGSIZE;
+			va += PGSIZE;
+			val += PGSIZE;
+		}
+	}
 }
-
-
 
 /*
 This function receives two matrices mat1 and mat2 as an argument with size
@@ -345,4 +396,34 @@ void MatMult(void *mat1, void *mat2, int size, void *answer) {
     store the result to the "answer array"*/
 
 
+}
+
+int get_physical_bit(int bit) {
+	char *bitmap = physical_bitmap + bit / 8;
+	return *bitmap & (1 << (bit % 8));
+}
+
+int get_virtual_bit(int bit) {
+	char *bitmap = virtual_bitmap + bit / 8;
+	return *bitmap & (1 << (bit % 8));
+}
+
+void set_physical_bit(int bit) {
+	char *bitmap = physical_bitmap + bit / 8;
+	*bitmap |= 1 << bit % 8;
+}
+
+void set_virtual_bit(int bit) {
+	char *bitmap = virtual_bitmap + bit / 8;
+	*bitmap |= 1 << bit % 8;
+}
+
+void clear_physical_bit(int bit) {
+	char *bitmap = physical_bitmap + bit / 8;
+	*bitmap &= ~(1 << bit % 8);
+}
+
+void clear_virtual_bit(int bit) {
+	char *bitmap = virtual_bitmap + bit / 8;
+	*bitmap &= ~(1 << bit % 8);
 }
