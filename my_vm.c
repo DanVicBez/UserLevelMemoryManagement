@@ -286,7 +286,7 @@ void myfree(void *va, int size) {
 		int offset = ((uintptr_t) va) & ((1 << offset_bits) - 1);
 		
 		// not pointing to base of page, invalid pointer
-		if(!offset) {
+		if(offset) {
 			return;
 		}
 		
@@ -394,8 +394,29 @@ void MatMult(void *mat1, void *mat2, int size, void *answer) {
     load each element and perform multiplication. Take a look at test.c! In addition to
     getting the values from two matrices, you will perform multiplication and
     store the result to the "answer array"*/
-
-
+	int k; 
+	int j;
+	int i;
+	int y; 
+	int z;
+    int sum = 0;
+    int address_a = 0;
+    int address_b = 0;
+    int address_c = 0;
+    for(k = 0; k < size; k++){ //row
+        for(j = 0; j < size; j++){ //column
+            for(i = 0; i < size; i++){
+                address_a = (unsigned int)mat1 + ((k * size * sizeof(int))) + (i * sizeof(int));
+                address_b = (unsigned int)mat2 + ((i * size * sizeof(int))) + (j * sizeof(int));
+                GetVal((void *)address_a, &y, sizeof(int));
+                GetVal((void *)address_b, &z, sizeof(int));
+                sum += z * y;
+            }
+            address_c = (unsigned int)answer + ((k * size * sizeof(int))) + (j * sizeof(int));
+            PutVal((void *)address_c, &sum, sizeof(int));
+			sum = 0;
+        }
+	}
 }
 
 int get_physical_bit(int bit) {
