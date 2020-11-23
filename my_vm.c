@@ -19,7 +19,7 @@ int directory_size;
 int page_table_size;
 
 // the total number of frames
-int num_frames;
+unsigned int num_frames;
 
 /*
  * Function responsible for allocating and setting your physical memory
@@ -42,20 +42,16 @@ void SetPhysicalMem() {
 	int i;
 	for(i = 0; i < directory_size; i++) {
 		directory[i] = -1;
-		page_tables[i] = (pte_t *) malloc(sizeof(pte_t) * page_table_size);
-		
-		int j;
-		for(j = 0; j < page_table_size; j++) {
-			page_tables[i][j] = -1;
-		}
 	}
+	
+	memory = mmap(NULL, MEMSIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 
 	virtual_bitmap = (char *) malloc(num_frames / 8);
 	physical_bitmap = (char *) malloc(num_frames / 8);
 	
-	memory = mmap(NULL, 1, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-	
 	tlb_store = NULL;
+	
+	pthread_mutex_init(&mutex, NULL);
 }
 
 /*
@@ -63,7 +59,6 @@ void SetPhysicalMem() {
  * Feel free to extend the function arguments or return type.
  */
 int add_TLB(void *va, void *pa) {
-    /*Part 2 HINT: Add a virtual to physical page translation to the TLB */
     struct tlb *tlb;
     
     if(tlb_store == NULL) {
@@ -130,30 +125,34 @@ int add_TLB(void *va, void *pa) {
  * Feel free to extend this function and change the return type.
  */
 pte_t *check_TLB(void *va) {
-	if(tlb_store == NULL) return NULL;
+	checks++;
+
+	if(tlb_store == NULL) {
+		misses++;
+		return NULL;
+	}
 
 	int page_number = ((uintptr_t) va) >> offset_bits;
 	struct tlb *tlb = tlb_store;
+	pte_t *frame = NULL;
 	
 	while(tlb != NULL) {
 		if(tlb->page_number == page_number) {
 			tlb->last_used = 0;
-			
+			frame = (pte_t *) ((char *) memory + tlb->frame_number * PGSIZE);
+		} else {
 			// increment last_used of every other TLB entry
-			struct tlb *tlb2;
-			for(tlb2 = tlb_store; tlb2 != NULL; tlb2 = tlb2->next) {
-				if(tlb2 != tlb) {
-					tlb2->last_used++;
-				}
-			}
-			
-			return (pte_t *) ((char *) memory + tlb->frame_number * PGSIZE);
-		}	
+			tlb->last_used++;
+		}
 	
 		tlb = tlb->next;
 	}
 	
-	return NULL;
+	if(frame == NULL) {
+		misses++;
+	}
+	
+	return frame;
 }
 
 /*
@@ -161,20 +160,15 @@ pte_t *check_TLB(void *va) {
  * Feel free to extend the function arguments or return type.
  */
 void print_TLB_missrate() {
-    double miss_rate = 0;
+    double miss_rate = (double) misses / checks;
 
-    /*Part 2 Code here to calculate and print the TLB miss rate*/
-
-
-
-
-    fprintf(stderr, "TLB miss rate %lf \n", miss_rate);
+    fprintf(stderr, "TLB miss rate %d/%d = %lf%%\n", misses, checks, miss_rate * 100);
 }
 
 /*
-The function takes a virtual address and page directories starting address and
-performs translation to return the physical address
-*/
+ * The function takes a virtual address and page directories starting address and
+ * performs translation to return the physical address
+ */
 pte_t *Translate(pde_t *pgdir, void *va) {
     uintptr_t ptr = (uintptr_t) va;
 	int offset = ptr & ((1 << offset_bits) - 1);
@@ -192,47 +186,46 @@ pte_t *Translate(pde_t *pgdir, void *va) {
 		add_TLB(va, pa);
 		return (pte_t *) pa;
     } else {
-    	return tlb_entry + offset;
+    	return (pte_t *) ((char *) tlb_entry + offset);
     }
 }
 
 /*
-The function takes a page directory address, virtual address, physical address
-as an argument, and sets a page table entry. This function will walk the page
-directory to see if there is an existing mapping for a virtual address. If the
-virtual address is not present, then a new entry will be added
-*/
+ * The function takes a page directory address, virtual address, physical address
+ * as an argument, and sets a page table entry. This function will walk the page
+ * directory to see if there is an existing mapping for a virtual address. If the
+ * virtual address is not present, then a new entry will be added
+ */
 int PageMap(pde_t *pgdir, void *va, void *pa) {
     uintptr_t ptr = (uintptr_t) va;
     int directory_index = ptr >> (32 - directory_bits);
     int table_index = (ptr >> offset_bits) & ((1 << page_bits) - 1);
     pde_t index = pgdir[directory_index];
-    
-    /*if(index == -1) { // no page table mapped to the directory index
-    	// find a page table with the required index free
-    	int i;
-    	for(i = 0; i < directory_size; i++) {
-    		pte_t *table = page_tables[i];
-    		if(table[table_index] == -1) {
-    			table[table_index] = ((char *) pa - memory) / PGSIZE;
-    			pgdir[directory_index] = i;
-    			return 1;
-    		}
-    	}
-    } else { // there is a mapped page table*/
 	pte_t *table = page_tables[index];
+	
+	// table not initialized yet, malloc and set all entries to -1
+	if(table == NULL) {
+		page_tables[index] = (pte_t *) malloc(sizeof(pte_t) * page_table_size);
+		table = page_tables[index];
+		
+		int j;
+		for(j = 0; j < page_table_size; j++) {
+			table[j] = -1;
+		}
+	}
+	
 	if(table[table_index] == -1) {
 		table[table_index] = ((char *) pa - memory) / PGSIZE;
 		return 1;
 	}
-    //}
 
     return 0;
 }
 
 
-/*Function that gets the next available page
-*/
+/*
+ * Function that gets the next available page
+ */
 void *get_next_avail(int num_pages) {
 	int i;
 	for(i = 1; i < num_frames; i++) {
@@ -262,9 +255,11 @@ void *get_next_avail(int num_pages) {
 }
 
 /* Function responsible for allocating pages
-and used by the benchmark
-*/
+ * and used by the benchmark
+ */
 void *myalloc(unsigned int num_bytes) {
+	pthread_mutex_lock(&mutex);
+	
 	if(!initialized) {
 		initialized = true;
 		SetPhysicalMem();
@@ -308,22 +303,6 @@ void *myalloc(unsigned int num_bytes) {
 		directory[directory_index] = i;
 	}
 	
-	/*// see whether the page table is already mapped in the directory
-	int directory_index;
-	for(directory_index = 0; directory_index < directory_size && directory[directory_index] != i; directory_index++) {}
-	
-	// if not, find the first empty directory entry and map it to the page table
-	if(directory_index == directory_size) {
-		for(directory_index = 0; directory_index < directory_size && directory[directory_index] != -1; directory_index++) {}
-		
-		// directory is full
-		if(directory_index == directory_size) {
-			return NULL;
-		}
-		
-		directory[directory_index] = i;
-	}*/
-	
 	// find an available frame for each page and map them together
 	void *ptr;
 	int k;
@@ -337,13 +316,14 @@ void *myalloc(unsigned int num_bytes) {
 			}
 		}
 	
-		PageMap(directory, va, memory + i * PGSIZE);
+		PageMap(directory, va + k * PGSIZE, memory + i * PGSIZE);
 		
 		if(k == 0) {
 			ptr = va;
 		}
 	}
-
+	
+	pthread_mutex_unlock(&mutex);
 	return ptr;
 }
 
@@ -368,6 +348,7 @@ void myfree(void *va, int size) {
 		
 		int page_num = (uintptr_t) va / PGSIZE + i;
 		
+		pthread_mutex_lock(&mutex);
 		if(get_virtual_bit(page_num)) {
 			clear_virtual_bit(page_num);
 			
@@ -379,7 +360,9 @@ void myfree(void *va, int size) {
 			}
 			
 			table[table_index] = -1;
+			pthread_mutex_unlock(&mutex);
 		} else { // pointing to unused page, invalid pointer
+			pthread_mutex_unlock(&mutex);
 			return;
 		}
     }
@@ -395,6 +378,8 @@ void PutVal(void *va, void *val, int size) {
        than one page. Therefore, you may have to find multiple pages using Translate()
        function.*/
 	int offset = ((uintptr_t) va) & ((1 << offset_bits) - 1);
+	
+	pthread_mutex_lock(&mutex);
 	void *pa = Translate(directory, va);
 
 	// invalid virtual address
@@ -415,12 +400,20 @@ void PutVal(void *va, void *val, int size) {
 			if(!get_virtual_bit(((uintptr_t) va) / PGSIZE)) return;
 		
 			pa = Translate(directory, va);
-			memcpy(pa, val, size % PGSIZE);
+			
+			if(size % PGSIZE == 0) {
+				memcpy(pa, val, PGSIZE);
+			} else {
+				memcpy(pa, val, size % PGSIZE);
+			}
+			
 			size -= PGSIZE;
 			va += PGSIZE;
 			val += PGSIZE;
 		}
 	}
+	
+	pthread_mutex_unlock(&mutex);
 }
 
 /*Given a virtual address, this function copies the contents of the page to val*/
@@ -430,6 +423,8 @@ void GetVal(void *va, void *val, int size) {
     If you are implementing TLB,  always check first the presence of translation
     in TLB before proceeding forward */
 	int offset = ((uintptr_t) va) & ((1 << offset_bits) - 1);
+	
+	pthread_mutex_lock(&mutex);
 	void *pa = Translate(directory, va);
 
 	// invalid virtual address
@@ -450,49 +445,78 @@ void GetVal(void *va, void *val, int size) {
 			if(!get_virtual_bit((uintptr_t) va) / PGSIZE) return;
 		
 			pa = Translate(directory, va);
-			memcpy(val, pa, size % PGSIZE);
+			
+			if(size % PGSIZE == 0) {
+				memcpy(val, pa, PGSIZE);
+			} else {
+				memcpy(val, pa, size % PGSIZE);
+			}
+			
 			size -= PGSIZE;
 			va += PGSIZE;
 			val += PGSIZE;
 		}
 	}
+	
+	pthread_mutex_unlock(&mutex);
 }
 
 /*
-This function receives two matrices mat1 and mat2 as an argument with size
-argument representing the number of rows and columns. After performing matrix
-multiplication, copy the result to answer.
-*/
+ * This function receives two matrices mat1 and mat2 as an argument with size
+ * argument representing the number of rows and columns. After performing matrix
+ * multiplication, copy the result to answer.
+ */
 void MatMult(void *mat1, void *mat2, int size, void *answer) {
-
-    /* Hint: You will index as [i * size + j] where  "i, j" are the indices of the
-    matrix accessed. Similar to the code in test.c, you will use GetVal() to
-    load each element and perform multiplication. Take a look at test.c! In addition to
-    getting the values from two matrices, you will perform multiplication and
-    store the result to the "answer array"*/
+	/* Hint: You will index as [i * size + j] where  "i, j" are the indices of the
+	matrix accessed. Similar to the code in test.c, you will use GetVal() to
+	load each element and perform multiplication. Take a look at test.c! In addition to
+	getting the values from two matrices, you will perform multiplication and
+	store the result to the "answer array"*/
 	int k;
 	int j;
 	int i;
 	int y;
 	int z;
-    int sum = 0;
-    int address_a = 0;
-    int address_b = 0;
-    int address_c = 0;
-    for(k = 0; k < size; k++){ //row
-        for(j = 0; j < size; j++){ //column
-            for(i = 0; i < size; i++){
-                address_a = (unsigned int)mat1 + ((k * size * sizeof(int))) + (i * sizeof(int));
-                address_b = (unsigned int)mat2 + ((i * size * sizeof(int))) + (j * sizeof(int));
-                GetVal((void *)address_a, &y, sizeof(int));
-                GetVal((void *)address_b, &z, sizeof(int));
-                sum += z * y;
+	int sum = 0;
+	int address_a = 0;
+	int address_b = 0;
+	int address_c = 0;
+	unsigned long getval_time = 0;
+	unsigned long putval_time = 0;
+	struct timespec start, end;
+	
+	for(k = 0; k < size; k++) { //row
+		for(j = 0; j < size; j++) { //column
+			for(i = 0; i < size; i++) {
+				address_a = (unsigned int) mat1 + (k * size * sizeof(int)) + (i * sizeof(int));
+				address_b = (unsigned int) mat2 + (i * size * sizeof(int)) + (j * sizeof(int));
+                
+				clock_gettime(CLOCK_REALTIME, &start);
+				GetVal((void *) address_a, &y, sizeof(int));
+				clock_gettime(CLOCK_REALTIME, &end);
+				getval_time += (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+				
+				clock_gettime(CLOCK_REALTIME, &start);
+				GetVal((void *) address_b, &z, sizeof(int));
+				clock_gettime(CLOCK_REALTIME, &end);
+				getval_time += (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+                
+                sum += y * z;
             }
-            address_c = (unsigned int)answer + ((k * size * sizeof(int))) + (j * sizeof(int));
+            
+            address_c = (unsigned int) answer + ((k * size * sizeof(int))) + (j * sizeof(int));
+            
+			clock_gettime(CLOCK_REALTIME, &start);
             PutVal((void *)address_c, &sum, sizeof(int));
+			clock_gettime(CLOCK_REALTIME, &end);
+			putval_time += (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+
 			sum = 0;
         }
 	}
+	
+	printf("Average time over %d calls to GetVal(): %lu microseconds\n", 2 * size * size * size, getval_time / (2 * size * size * size));
+	printf("Average time over %d calls to PutVal(): %lu microseconds\n", size * size * size, putval_time / (size * size * size));
 }
 
 int get_physical_bit(int bit) {

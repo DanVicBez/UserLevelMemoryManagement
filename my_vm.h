@@ -8,11 +8,11 @@
 #include <math.h>
 #include <errno.h>
 #include <string.h>
+#include <time.h>
+#include <pthread.h>
 
 //Assume the address space is 32 bits, so the max memory size is 4GB
 //Page size is 4KB
-
-//Add any important includes here which you may need
 
 #define PGSIZE 4096
 // Maximum size of your memory
@@ -47,6 +47,11 @@ pde_t *directory;
 pte_t **page_tables;
 char *virtual_bitmap;
 char *physical_bitmap;
+
+unsigned int checks;
+unsigned int misses;
+
+pthread_mutex_t mutex;
 
 void SetPhysicalMem();
 pte_t* Translate(pde_t *pgdir, void *va);
