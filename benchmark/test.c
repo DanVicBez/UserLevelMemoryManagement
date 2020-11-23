@@ -9,10 +9,11 @@
 int main() {
 	srand(time(0));
     printf("Allocating three arrays of 400 bytes\n");
-    void *a = myalloc(100 * 4);
+    unsigned int alloc_size = SIZE * SIZE * sizeof(int);
+    void *a = myalloc(alloc_size);
     int old_a = (int) a;
-    void *b = myalloc(100 * 4);
-    void *c = myalloc(100 * 4);
+    void *b = myalloc(alloc_size);
+    void *c = myalloc(alloc_size);
     int x = 1;
     int y, z;
     int i = 0, j = 0;
@@ -24,8 +25,8 @@ int main() {
     printf("Storing integers to generate a SIZExSIZE matrix\n");
     for (i = 0; i < SIZE; i++) {
         for (j = 0; j < SIZE; j++) {
-            address_a = (unsigned int) a + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
-            address_b = (unsigned int) b + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            address_a = (unsigned int) a + (i * SIZE * sizeof(int)) + (j * sizeof(int));
+            address_b = (unsigned int) b + (i * SIZE * sizeof(int)) + (j * sizeof(int));
             
             x = rand() % 10;
             PutVal((void *) address_a, &x, sizeof(int));
@@ -39,7 +40,7 @@ int main() {
 	printf("Matrix 1:\n");
     for (i = 0; i < SIZE; i++) {
         for (j = 0; j < SIZE; j++) {
-            address_a = (unsigned int) a + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            address_a = (unsigned int) a + (i * SIZE * sizeof(int)) + (j * sizeof(int));
             GetVal((void *) address_a, &y, sizeof(int));
             printf("%d ", y);
         }
@@ -49,7 +50,7 @@ int main() {
 	printf("Matrix 2:\n");
     for (i = 0; i < SIZE; i++) {
         for (j = 0; j < SIZE; j++) {
-            address_b = (unsigned int) b + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            address_b = (unsigned int) b + (i * SIZE * sizeof(int)) + (j * sizeof(int));
             GetVal((void *) address_b, &z, sizeof(int));
             printf("%d ", z);
         }
@@ -61,7 +62,7 @@ int main() {
 
     for (i = 0; i < SIZE; i++) {
         for (j = 0; j < SIZE; j++) {
-            address_c = (unsigned int) c + ((i * SIZE * sizeof(int))) + (j * sizeof(int));
+            address_c = (unsigned int) c + (i * SIZE * sizeof(int)) + (j * sizeof(int));
             GetVal((void *) address_c, &y, sizeof(int));
             printf("%d ", y);
         }
@@ -70,16 +71,18 @@ int main() {
     }
     
     printf("Freeing the allocations!\n");
-    myfree(a, 100 * 4);
-    myfree(b, 100 * 4);
-    myfree(c, 100 * 4);
+    myfree(a, alloc_size);
+    myfree(b, alloc_size);
+    myfree(c, alloc_size);
 
     printf("Checking if allocations were freed!\n");
-    a = myalloc(100 * 4);
+    a = myalloc(alloc_size);
     if ((int) a == old_a)
         printf("free function works\n");
     else
         printf("free function does not work\n");
+
+	print_TLB_missrate();
 
     return 0;
 }
